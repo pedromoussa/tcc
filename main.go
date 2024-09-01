@@ -1,10 +1,10 @@
 package main
 
 import (
+	"biblioteca/safechannel"
 	"fmt"
 	"sync"
 	"time"
-	"biblioteca/safechannel"
 )
 
 func main() {
@@ -19,27 +19,29 @@ func testSafeChannel() {
 	// Criando um SafeChannel com buffer de 2
 	sc := safechannel.NewSafeChannel[string](2)
 
+	// bufferedChannel := safechannel.NewSafeChannel[int](2)
+	// unbufferedChannel := safechannel.NewSafeChannel[string](0)
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Goroutine 1 - Enviando dados usando SafeChannel
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 2; i++ {
-			err := sc.Send(fmt.Sprintf("SafeChannel Mensagem %d", i+1))
-			if err != nil {
-				fmt.Println("Erro ao enviar (SafeChannel):", err)
-				return
-			}
-			fmt.Println("Enviado (SafeChannel):", i+1)
-		}
-		// Fechando o SafeChannel após envio
-		if err := sc.Close(); err != nil {
-			fmt.Println("Erro ao fechar (SafeChannel):", err)
-		}
-	}()
-
-	// Goroutine 2 - Recebendo dados usando SafeChannel
+ // Goroutine 1 - Enviando dados usando SafeChannel
+ go func() {
+	 defer wg.Done()
+	 for i := 0; i < 2; i++ {
+		 err := sc.Send(fmt.Sprintf("SafeChannel Mensagem %d", i+1))
+		 if err != nil {
+			 fmt.Println("Erro ao enviar (SafeChannel):", err)
+			 return
+		 }
+		 fmt.Println("Enviado (SafeChannel):", i+1)
+	 }
+	 // Fechando o SafeChannel após envio
+	 if err := sc.Close(); err != nil {
+		 fmt.Println("Erro ao fechar (SafeChannel):", err)
+	 }
+  }()
+ 	// Goroutine 2 - Recebendo dados usando SafeChannel
 	go func() {
 		defer wg.Done()
 		time.Sleep(1 * time.Second) // Simulando algum processamento
