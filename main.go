@@ -1,10 +1,10 @@
 package main
 
 import (
-	"biblioteca/safechannel"
 	"fmt"
 	"sync"
 	"time"
+	"biblioteca/safechannel"
 )
 
 func main() {

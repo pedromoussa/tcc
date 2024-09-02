@@ -5,24 +5,54 @@
 // 	"sync"
 // )
 
-// // SafeChannel is a thread-safe wrapper around Go channels.
 // type SafeChannel[T any] struct {
 // 	sendCh chan T
 // 	recvCh chan T
-// 	closed bool
 // 	mu     sync.Mutex
+// 	closed bool
 // }
 
-// // NewSafeChannel creates a new SafeChannel with the given buffer size.
 // func NewSafeChannel[T any](bufferSize int) *SafeChannel[T] {
-// 	return &SafeChannel[T]{
-// 		sendCh: make(chan T, bufferSize),
-// 		recvCh: make(chan T, bufferSize),
+// 	var sendCh, recvCh chan T
+
+// 	if bufferSize > 0 {
+// 		sendCh = make(chan T, bufferSize)
+// 		recvCh = make(chan T, bufferSize)
+// 	} else {
+// 		sendCh = make(chan T)
+// 		recvCh = make(chan T)
+// 	}
+
+// 	sc := &SafeChannel[T]{
+// 		sendCh: sendCh,
+// 		recvCh: recvCh,
 // 		closed: false,
 // 	}
+
+// 	go sc.forwardMessages()
+// 	return sc
 // }
 
-// // Send sends a value to the SafeChannel's sendCh and recvCh.
+// func (sc *SafeChannel[T]) forwardMessages() {
+// 	for value := range sc.sendCh {
+// 		sc.mu.Lock()
+// 		if sc.closed {
+// 			sc.mu.Unlock()
+// 			break
+// 		}
+// 		sc.recvCh <- value // Forward message to recvCh
+// 		sc.mu.Unlock()
+// 	}
+
+// 	// Close recvCh after all messages are processed
+// 	sc.mu.Lock()
+// 	if !sc.closed {
+// 		close(sc.recvCh)
+// 		sc.closed = true
+// 	}
+// 	sc.mu.Unlock()
+// }
+
 // func (sc *SafeChannel[T]) Send(value T) error {
 // 	sc.mu.Lock()
 // 	defer sc.mu.Unlock()
@@ -31,49 +61,29 @@
 // 		return errors.New("send on closed channel")
 // 	}
 
-// 	// Send to the sendCh channel and expect a goroutine to consume from recvCh
-// 	select {
-// 	case sc.sendCh <- value:
-// 		// Block if necessary to ensure sendCh and recvCh are in sync
-// 		// In case of unbuffered channels, ensure sync
-// 		sc.recvCh <- value
-// 	default:
-// 		return errors.New("channel buffer full")
-// 	}
-
+// 	sc.sendCh <- value
 // 	return nil
 // }
 
-// // Receive retrieves a value from the SafeChannel's recvCh.
 // func (sc *SafeChannel[T]) Receive() (T, error) {
 // 	value, ok := <-sc.recvCh
 // 	if !ok {
-// 		return *new(T), errors.New("receive on closed channel")
+// 		var zero T
+// 		return zero, errors.New("receive on closed channel")
 // 	}
 // 	return value, nil
 // }
 
-// // Close closes the SafeChannel's sendCh and eventually recvCh after all messages are received.
 // func (sc *SafeChannel[T]) Close() error {
 // 	sc.mu.Lock()
+// 	defer sc.mu.Unlock()
 
 // 	if sc.closed {
-// 		sc.mu.Unlock()
 // 		return errors.New("channel already closed")
 // 	}
 
+// 	close(sc.sendCh)
 // 	sc.closed = true
-// 	close(sc.sendCh) // Close the send channel to prevent further sends
-// 	sc.mu.Unlock()
-
-// 	// Start a goroutine to transfer remaining messages from sendCh to recvCh
-// 	go func() {
-// 		for msg := range sc.sendCh {
-// 			sc.recvCh <- msg
-// 		}
-// 		close(sc.recvCh) // Close recvCh after all messages are transferred
-// 	}()
-
 // 	return nil
 // }
 
@@ -113,23 +123,17 @@ func NewSafeChannel[T any](bufferSize int) *SafeChannel[T] {
 }
 
 func (sc *SafeChannel[T]) forwardMessages() {
-	for value := range sc.sendCh {
-		sc.mu.Lock()
-		if sc.closed {
-			sc.mu.Unlock()
-			break
+	for {
+		value, ok := <-sc.sendCh
+		if !ok {
+			// If sendCh is closed and all messages have been forwarded, close recvCh
+			close(sc.recvCh)
+			return
 		}
-		sc.recvCh <- value // Forward message to recvCh
-		sc.mu.Unlock()
-	}
 
-	// Close recvCh after all messages are processed
-	sc.mu.Lock()
-	if !sc.closed {
-		close(sc.recvCh)
-		sc.closed = true
+		// Forward message to recvCh
+		sc.recvCh <- value
 	}
-	sc.mu.Unlock()
 }
 
 func (sc *SafeChannel[T]) Send(value T) error {
@@ -140,8 +144,12 @@ func (sc *SafeChannel[T]) Send(value T) error {
 		return errors.New("send on closed channel")
 	}
 
-	sc.sendCh <- value
-	return nil
+	select {
+	case sc.sendCh <- value:
+		return nil
+	default:
+		return errors.New("channel buffer full")
+	}
 }
 
 func (sc *SafeChannel[T]) Receive() (T, error) {
@@ -155,13 +163,14 @@ func (sc *SafeChannel[T]) Receive() (T, error) {
 
 func (sc *SafeChannel[T]) Close() error {
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
-
 	if sc.closed {
+		sc.mu.Unlock()
 		return errors.New("channel already closed")
 	}
 
 	close(sc.sendCh)
 	sc.closed = true
+	sc.mu.Unlock()
+
 	return nil
 }
