@@ -85,3 +85,47 @@ func (sc *SafeChannel[T]) Close() error {
 
 	return nil
 }
+
+type SelectCaseFunc func() (bool, int, interface{}, error)
+
+func Select(cases ...SelectCaseFunc) (int, interface{}, error) {
+	for {
+		for _, c := range cases {
+			ok, idx, value, err := c()
+			if ok {
+				return idx, value, err
+			}
+		}
+	}
+}
+
+func CaseReceive[T any](sc *SafeChannel[T], onReceive func(T)) SelectCaseFunc {
+	return func() (bool, int, interface{}, error) {
+		select {
+		case msg, ok := <-sc.recvCh:
+			if !ok {
+				return true, -1, nil, errors.New("receive on closed channel")
+			}
+			if onReceive != nil {
+				onReceive(msg)
+			}
+			return true, 0, msg, nil
+		default:
+			return false, 0, nil, nil
+		}
+	}
+}
+
+func CaseSend[T any](sc *SafeChannel[T], msg T) SelectCaseFunc {
+	return func() (bool, int, interface{}, error) {
+		if sc.closed {
+			return true, -1, nil, errors.New("send on closed channel")
+		}
+		select {
+		case sc.sendCh <- msg:
+			return true, 0, nil, nil
+		default:
+			return true, -1, nil, errors.New("channel buffer full")
+		}
+	}
+}
