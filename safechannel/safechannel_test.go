@@ -8,7 +8,7 @@ import (
 )
 
 func TestSafeChannel_NormalOperation(t *testing.T) {
-	sc := NewSafeChannel[int](1)
+	sc := MakeSafeChannel[int](1)
 	
 	err := sc.Send(42)
 	if err != nil {
@@ -26,7 +26,7 @@ func TestSafeChannel_NormalOperation(t *testing.T) {
 
 // FIX
 func TestSafeChannel_FullBuffer(t *testing.T) {
-	sc := NewSafeChannel[int](1)
+	sc := MakeSafeChannel[int](1)
 
 	err := sc.Send(42)
 	if err != nil {
@@ -54,7 +54,7 @@ func TestSafeChannel_FullBuffer(t *testing.T) {
 // }
 
 func TestSafeChannel_SendToClosed(t *testing.T) {
-	sc := NewSafeChannel[int](0)
+	sc := MakeSafeChannel[int](0)
 
 	sc.Close()
 
@@ -65,7 +65,7 @@ func TestSafeChannel_SendToClosed(t *testing.T) {
 }
 
 func TestSafeChannel_ReceiveFromClosed(t *testing.T) {
-	sc := NewSafeChannel[int](1)
+	sc := MakeSafeChannel[int](1)
 
 	err := sc.Send(42)
 	if err != nil {
@@ -89,7 +89,7 @@ func TestSafeChannel_ReceiveFromClosed(t *testing.T) {
 }
 
 func TestSafeChannel_Concurrent(t *testing.T) {
-	sc := NewSafeChannel[int](0)
+	sc := MakeSafeChannel[int](0)
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -110,7 +110,7 @@ func TestSafeChannel_Concurrent(t *testing.T) {
 
 // FIX
 func TestSafeChannel_SendWithoutReceive(t *testing.T) {
-	sc := NewSafeChannel[int](1)
+	sc := MakeSafeChannel[int](1)
 
 	err := sc.Send(42)
 	if err != nil {
@@ -124,7 +124,7 @@ func TestSafeChannel_SendWithoutReceive(t *testing.T) {
 }
 
 func TestSafeChannel_SendWithoutReceiveUnbuffered(t *testing.T) {
-	sc := NewSafeChannel[int](0)
+	sc := MakeSafeChannel[int](0)
 
 	done := make(chan error)
     
@@ -146,7 +146,7 @@ func TestSafeChannel_SendWithoutReceiveUnbuffered(t *testing.T) {
 }
 
 func TestSafeChannel_CloseTwice(t *testing.T) {
-	sc := NewSafeChannel[int](0)
+	sc := MakeSafeChannel[int](0)
 
 	err := sc.Close()
 	if err != nil {
@@ -160,7 +160,7 @@ func TestSafeChannel_CloseTwice(t *testing.T) {
 }
 
 func TestSafeChannel_CustomSelect(t *testing.T) {
-	sc := NewSafeChannel[int](1)
+	sc := MakeSafeChannel[int](1)
 
  	err := sc.Send(42)
  	if err != nil {

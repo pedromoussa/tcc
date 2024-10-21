@@ -2,6 +2,7 @@ package safechannel
 
 import (
 	"errors"
+	"runtime"
 	"sync"
 )
 
@@ -13,13 +14,17 @@ type SafeChannel[T any] struct {
 	closed bool
 }
 
-func NewSafeChannel[T any](bufferSize int) *SafeChannel[T] {
+func MakeSafeChannel[T any](bufferSize ...int) *SafeChannel[T] {
 	var sendCh, recvCh chan T
-	notifyCh := make(chan Notification[T], 10)
+	var size int
 
-	if bufferSize > 0 {
-		sendCh = make(chan T, bufferSize)
-		recvCh = make(chan T, bufferSize)
+	if len(bufferSize) > 0 {
+		size = bufferSize[0]
+	}
+
+	if size > 0 {
+		sendCh = make(chan T, size)
+		recvCh = make(chan T, size)
 	} else {
 		sendCh = make(chan T)
 		recvCh = make(chan T)
@@ -28,7 +33,6 @@ func NewSafeChannel[T any](bufferSize int) *SafeChannel[T] {
 	sc := &SafeChannel[T]{
 		sendCh: sendCh,
 		recvCh: recvCh,
-		notifyCh: notifyCh,
 		closed: false,
 	}
 
@@ -42,6 +46,9 @@ func (sc *SafeChannel[T]) forwardMessages() {
 		if !ok {
 			// If sendCh is closed and all messages have been forwarded, close recvCh
 			close(sc.recvCh)
+			if sc.notifyCh != nil {
+				close(sc.notifyCh)
+			}
 			return
 		}
 
@@ -142,17 +149,57 @@ func CaseSend[T any](sc *SafeChannel[T], msg T) SelectCaseFunc {
 	}
 }
 
+func CaseDefault() SelectCaseFunc {
+	return func() (bool, int, interface{}, error) {
+			return true, -1, nil, nil
+	}
+}
+
 type Notification[T any] struct {
 	ReturnValue int
 	Message     string
-	CallerID    string
 	Value       T
+	FuncName    string
+	File        string
+	Line        int
+}
+
+func (sc *SafeChannel[T]) EnableNotifications(bufferSize ...int) {
+	var size int
+
+	if len(bufferSize) > 0 {
+		size = bufferSize[0]
+	}
+
+	sc.notifyCh = make(chan Notification[T], size)
+}
+
+func (sc *SafeChannel[T]) ReadNotification() (Notification[T], error) {
+	if sc.notifyCh == nil {
+			return Notification[T]{}, errors.New("notifications not enabled")
+	}
+	notification, ok := <-sc.notifyCh
+	if !ok {
+			return Notification[T]{}, errors.New("notification channel closed")
+	}
+	return notification, nil
 }
 
 func (sc *SafeChannel[T]) notify(notification Notification[T]) {
+	if sc.notifyCh == nil {
+		return
+	}
+
+	pc, file, line, ok := runtime.Caller(2)
+	if ok {
+		notification.FuncName = runtime.FuncForPC(pc).Name()
+		notification.File = file
+		notification.Line = line
+	}
 	select {
 	case sc.notifyCh <- notification:
 	default:
-		// Ignore the notification if notifyCh is full
+		<- sc.notifyCh
+		sc.notifyCh <- notification
 	}
 }

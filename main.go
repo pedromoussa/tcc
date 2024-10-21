@@ -17,10 +17,10 @@ func main() {
 
 func testSafeChannel() {
 	// Criando um SafeChannel com buffer de 2
-	sc := safechannel.NewSafeChannel[string](2)
+	sc := safechannel.MakeSafeChannel[string](2)
 
-	// bufferedChannel := safechannel.NewSafeChannel[int](2)
-	// unbufferedChannel := safechannel.NewSafeChannel[string](0)
+	// bufferedChannel := safechannel.MakeSafeChannel[int](2)
+	// unbufferedChannel := safechannel.MakeSafeChannel[string](0)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
