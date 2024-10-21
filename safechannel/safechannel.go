@@ -16,19 +16,10 @@ type SafeChannel[T any] struct {
 
 func MakeSafeChannel[T any](bufferSize ...int) *SafeChannel[T] {
 	var sendCh, recvCh chan T
-	var size int
-
-	if len(bufferSize) > 0 {
-		size = bufferSize[0]
-	}
-
-	if size > 0 {
-		sendCh = make(chan T, size)
-		recvCh = make(chan T, size)
-	} else {
-		sendCh = make(chan T)
-		recvCh = make(chan T)
-	}
+	var size = getBufferSize(bufferSize)
+	
+	sendCh = make(chan T, size)
+	recvCh = make(chan T, size)
 
 	sc := &SafeChannel[T]{
 		sendCh: sendCh,
@@ -165,17 +156,8 @@ type Notification[T any] struct {
 }
 
 func (sc *SafeChannel[T]) EnableNotifications(bufferSize ...int) {
-	var size int
-
-	if len(bufferSize) > 0 {
-		size = bufferSize[0]
-	}
-
-	if size > 0 {
-		sc.notifyCh = make(chan Notification[T], size)
-	} else {
-		sc.notifyCh = make(chan Notification[T])
-	}
+	var size = getBufferSize(bufferSize)
+	sc.notifyCh = make(chan Notification[T], size)
 }
 
 func (sc *SafeChannel[T]) ReadNotification() (Notification[T], error) {
@@ -205,5 +187,13 @@ func (sc *SafeChannel[T]) notify(notification Notification[T]) {
 	default:
 		<- sc.notifyCh
 		sc.notifyCh <- notification
+	}
+}
+
+func getBufferSize(bufferSize []int) int {
+	if len(bufferSize) > 0 {
+		return bufferSize[0]
+	} else {
+		return 0
 	}
 }
