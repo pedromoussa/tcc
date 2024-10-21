@@ -171,7 +171,11 @@ func (sc *SafeChannel[T]) EnableNotifications(bufferSize ...int) {
 		size = bufferSize[0]
 	}
 
-	sc.notifyCh = make(chan Notification[T], size)
+	if size > 0 {
+		sc.notifyCh = make(chan Notification[T], size)
+	} else {
+		sc.notifyCh = make(chan Notification[T])
+	}
 }
 
 func (sc *SafeChannel[T]) ReadNotification() (Notification[T], error) {
