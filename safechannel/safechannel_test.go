@@ -1,8 +1,6 @@
 package safechannel
 
 import (
-	// "errors"
-	// "sync"
 	"testing"
 	"time"
 )
@@ -24,21 +22,63 @@ func TestSafeChannel_NormalOperation(t *testing.T) {
 	}
 }
 
-// FIX
+/*
+FIX - the case being tested here does not happen anymore
+now, instead of an Error when buffer is full, we send a notification (if enabled)
+and then retry the send operation
+*/
+// func TestSafeChannel_FullBuffer(t *testing.T) {
+// 	sc := MakeSafechannel[int](1)
+
+// 	err := sc.Send(42)
+// 	if err != nil {
+// 		t.Errorf("Unexpected error on send: %v", err)
+// 	}
+
+// 	err = sc.Send(99)
+// 	if err == nil || err.Error() != "channel buffer full" {
+// 		t.Errorf("Expected 'channel buffer full' error, got %v", err)
+// 	}
+// }
 func TestSafeChannel_FullBuffer(t *testing.T) {
 	sc := MakeSafechannel[int](1)
+	sc.EnableNotifications(10)
 
-	err := sc.Send(42)
-	if err != nil {
-		t.Errorf("Unexpected error on send: %v", err)
-	}
+	go func() {
+		err := sc.Send(42)
+		if err != nil {
+			t.Errorf("Unexpected error on send: %v", err)
+		}
+		err = sc.Send(99)
+		if err != nil {
+			t.Errorf("Unexpected error on send: %v", err)
+		}
+	}()
 
-	err = sc.Send(99)
-	if err == nil || err.Error() != "channel buffer full" {
-		t.Errorf("Expected 'channel buffer full' error, got %v", err)
-	}
+	go func() {
+		var messages [2]string
+		index := 0
+
+		for {
+			notification, err := sc.ReadNotification()
+			messages[index] = notification.Message
+      index++
+			if index == len(messages) {
+				if messages[index-1] != "channel buffer full" || err != nil {
+					t.Errorf("Expected 'channel buffer full' error, got %v", err)
+				}
+				break
+			}
+		}
+	}()
 }
 
+/*
+the check for nil channel was never implemented, the only risk is
+if we have a nil SafeChannel (created but didn't call MakeSafechannel)
+i do not know what's the expected behaviour in that case
+might be work looking into it
+*/
 // func TestSafeChannel_NilChannel(t *testing.T) {
 // 	var sc *SafeChannel[int]
 
@@ -88,6 +128,7 @@ func TestSafeChannel_ReceiveFromClosed(t *testing.T) {
 	}
 }
 
+// what is this test even checking?
 func TestSafeChannel_Concurrent(t *testing.T) {
 	sc := MakeSafechannel[int](0)
 
@@ -108,40 +149,75 @@ func TestSafeChannel_Concurrent(t *testing.T) {
 	}
 }
 
-// FIX
 func TestSafeChannel_SendWithoutReceive(t *testing.T) {
 	sc := MakeSafechannel[int](1)
+	done := make(chan error)
 
 	err := sc.Send(42)
 	if err != nil {
 		t.Errorf("Unexpected error on send: %v", err)
 	}
 
-	err = sc.Send(99)
-	if err == nil || err.Error() != "channel buffer full" {
-		t.Errorf("Expected 'channel buffer full' error, got %v", err)
+	go func() {
+		err = sc.Send(99)
+		done <- err
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("Test failed: Send should block until a receive occurs")
+	case <-time.After(500 * time.Millisecond):
+		t.Log("Send is correctly blocked in unbuffered SafeChannel")
+	}
+
+	go func() {
+		_, _ = sc.Receive()
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Unexpected error on send: %v", err)
+		} else {
+			t.Log("Send completed successfully after receive")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Test failed: Send did not unblock after a receive")
 	}
 }
 
 func TestSafeChannel_SendWithoutReceiveUnbuffered(t *testing.T) {
-	sc := MakeSafechannel[int](0)
+	sc := MakeSafechannel[int]()
 
 	done := make(chan error)
-    
+
 	go func() {
 		err := sc.Send(42)
 		done <- err
 	}()
 
 	select {
+	case <-done:
+		t.Fatal("Test failed: Send should block until a receive occurs")
+	case <-time.After(500 * time.Millisecond):
+		t.Log("Send is correctly blocked in unbuffered SafeChannel")
+	}
+
+	go func() {
+		_, _ = sc.Receive()
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("Unexpected error on send: %v", err)
+			t.Errorf("Unexpected error on send: %v", err)
 		} else {
-			t.Log("Send completed successfully")
+			t.Log("Send completed successfully after receive")
 		}
 	case <-time.After(1 * time.Second):
-		t.Fatal("Test failed: Send blocked due to missing receive")
+		t.Fatal("Test failed: Send did not unblock after a receive")
 	}
 }
 
@@ -179,5 +255,45 @@ func TestSafeChannel_CustomSelect(t *testing.T) {
 	}
 	if value.(int) != 42 {
 		t.Errorf("Expected value 42, got %v", value)
+	}
+}
+
+// need to add tests to see if the notification channel works
+func TestSafeChannel_Notifications(t *testing.T) {
+	sc := MakeSafechannel[int]() 
+	sc.EnableNotifications(10)
+
+	err := sc.Send(42)
+	if err != nil {
+		t.Errorf("Unexpected error on send: %v", err)
+	}
+
+	notification, err := sc.ReadNotification()
+	if err != nil {
+		t.Errorf("Failed to read notification: %v", err)
+	}
+	if notification.Message != "sent successfully" {
+		t.Errorf("Expected 'sent successfully', got %v", notification.Message)
+	}
+}
+
+// test the default case in the custom select
+func TestSafeChannel_CustomSelectDefault(t *testing.T) {
+	sc := MakeSafechannel[int](1)
+
+	go func() {
+		time.After(50 * time.Millisecond)
+		sc.Send(42)
+	}()
+
+	idx, value, err := Select(
+		CaseReceive(sc, nil),
+		CaseDefault(func() {
+			t.Log("Default case executed")
+		}),
+	)
+
+	if idx != 0 || value.(int) != 42 || err != nil {
+		t.Errorf("Expected case index 0 with value 42, got idx: %v, value: %v, err: %v", idx, value, err)
 	}
 }
