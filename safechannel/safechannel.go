@@ -10,9 +10,11 @@ import (
 type SafeChannel[T any] struct {
 	sendCh chan T
 	recvCh chan T
-	notifyCh  chan Notification[T]
-	mu     sync.Mutex
+	notifyCh chan Notification[T]
+	mu sync.Mutex
+	cond *sync.Cond
 	closed bool
+	pendingReceivers int
 	messagesInBuffer int64
 }
 
@@ -28,6 +30,7 @@ func MakeSafechannel[T any](bufferSize ...int) *SafeChannel[T] {
 		recvCh: recvCh,
 		closed: false,
 	}
+	sc.cond = sync.NewCond(&sc.mu)
 
 	go sc.forwardMessages()
 	return sc
@@ -39,6 +42,15 @@ func (sc *SafeChannel[T]) GetMessageCount() int64 {
 
 func (sc *SafeChannel[T]) forwardMessages() {
 	for {
+
+		// Wait until there is a receiver goroutine
+		sc.mu.Lock()
+		for sc.pendingReceivers == 0 {
+			sc.cond.Wait()
+		}
+		sc.pendingReceivers-- // A receiver will consume the message
+		sc.mu.Unlock()
+
 		value, ok := <-sc.sendCh
 		if !ok {
 			// If sendCh is closed and all messages have been forwarded, close recvCh
@@ -48,8 +60,6 @@ func (sc *SafeChannel[T]) forwardMessages() {
 			}
 			return
 		}
-
-		// sc.recvCh <- value
 
 		// Attempt to forward the message to recvCh (same logic as in Send())
 		select {
@@ -65,12 +75,11 @@ func (sc *SafeChannel[T]) forwardMessages() {
 
 func (sc *SafeChannel[T]) Send(value T) error {
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
-
 	if sc.closed {
 		sc.notify(Notification[T]{ReturnValue: -1, Message: "send on closed channel", Value: value})
 		return errors.New("send on closed channel")
 	}
+	sc.mu.Unlock()
 
 	select {
 	case sc.sendCh <- value:
@@ -87,6 +96,13 @@ func (sc *SafeChannel[T]) Send(value T) error {
 }
 
 func (sc *SafeChannel[T]) Receive() (T, error) {
+	sc.mu.Lock()
+
+	// Incremments the counter for pending receivers
+	sc.pendingReceivers++
+	sc.cond.Signal() // Signals forwardMessages that a receiver is ready
+	sc.mu.Unlock()
+
 	value, ok := <-sc.recvCh
 	if !ok {
 		var zero T
@@ -134,17 +150,6 @@ func Select(cases ...SelectCaseFunc) (int, interface{}, error) {
 
 	return -1, nil, nil
 }
-
-// func Select(cases ...SelectCaseFunc) (int, interface{}, error) {
-// 	for {
-// 		for _, c := range cases {
-// 			ok, idx, value, err := c()
-// 			if ok {
-// 				return idx, value, err
-// 			}
-// 		}
-// 	}
-// }
 
 func CaseReceive[T any](sc *SafeChannel[T], onReceive func(T)) SelectCaseFunc {
 	return func() (bool, int, interface{}, error) {
