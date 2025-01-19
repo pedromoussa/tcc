@@ -77,7 +77,7 @@ func TestSafeChannel_FullBuffer(t *testing.T) {
 the check for nil channel was never implemented, the only risk is
 if we have a nil SafeChannel (created but didn't call MakeSafechannel)
 i do not know what's the expected behaviour in that case
-might be work looking into it
+might be worth looking into it
 */
 // func TestSafeChannel_NilChannel(t *testing.T) {
 // 	var sc *SafeChannel[int]
@@ -104,6 +104,18 @@ func TestSafeChannel_SendToClosed(t *testing.T) {
 	}
 }
 
+// func TestNative_ReceiveFromClosed(t *testing.T) {
+// 	ch := make(chan int, 1)
+
+// 	ch <- 42
+
+// 	close(ch)
+
+// 	value := <- ch
+
+// 	t.Errorf("%v", value)
+// }
+
 func TestSafeChannel_ReceiveFromClosed(t *testing.T) {
 	sc := MakeSafechannel[int](1)
 
@@ -128,9 +140,9 @@ func TestSafeChannel_ReceiveFromClosed(t *testing.T) {
 	}
 }
 
-// what is this test even checking?
+// receive should listen until a message arrives from send
 func TestSafeChannel_Concurrent(t *testing.T) {
-	sc := MakeSafechannel[int](0)
+	sc := MakeSafechannel[int]()
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -189,7 +201,7 @@ func TestSafeChannel_SendWithoutReceive(t *testing.T) {
 
 func TestSafeChannel_SendWithoutReceiveUnbuffered(t *testing.T) {
 	sc := MakeSafechannel[int]()
-
+	sc.EnableNotifications(4)
 	done := make(chan error)
 
 	go func() {
@@ -197,8 +209,22 @@ func TestSafeChannel_SendWithoutReceiveUnbuffered(t *testing.T) {
 		done <- err
 	}()
 
-	select {
-	case <-done:
+	go func() {
+		var messages [4]string
+		index := 0
+
+		for {
+			notification, _ := sc.ReadNotification()
+			t.Log(notification.Message)
+      index++
+			if index == len(messages) {
+				break
+			}
+		}
+	}()
+
+	select { 
+	case <-done: 
 		t.Fatal("Test failed: Send should block until a receive occurs")
 	case <-time.After(500 * time.Millisecond):
 		t.Log("Send is correctly blocked in unbuffered SafeChannel")

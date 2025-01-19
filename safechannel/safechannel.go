@@ -40,36 +40,86 @@ func (sc *SafeChannel[T]) GetMessageCount() int64 {
 	return atomic.LoadInt64(&sc.messagesInBuffer)
 }
 
+// func (sc *SafeChannel[T]) forwardMessages() {
+// 	var channelsClosed bool
+
+// 	for {
+
+// 		if sc.closed {
+// 			if !channelsClosed {
+// 				close(sc.recvCh)
+// 				if sc.notifyCh != nil {
+// 					close(sc.notifyCh)
+// 				}
+// 				channelsClosed = true
+// 			}
+// 			return
+// 		}
+
+// 		// Attempt to forward the message to recvCh (same logic as in Send())
+// 		select {
+// 		case sc.recvCh <- <- sc.sendCh:
+// 			sc.notify(Notification[T]{ReturnValue: 0, Message: "received successfully"})
+// 		default:
+// 			sc.notify(Notification[T]{ReturnValue: -1, Message: "channel buffer full"})
+// 			sc.recvCh <- <-sc.sendCh
+// 			sc.notify(Notification[T]{ReturnValue: 0, Message: "received after waiting"})
+// 		}
+// 	}
+// }
+
 func (sc *SafeChannel[T]) forwardMessages() {
 	for {
-
-		// Wait until there is a receiver goroutine
 		sc.mu.Lock()
-		for sc.pendingReceivers == 0 {
+
+		for sc.pendingReceivers == 0 && !sc.closed {
 			sc.cond.Wait()
 		}
-		sc.pendingReceivers-- // A receiver will consume the message
+
+		// if sc.closed {
+		// 	close(sc.recvCh)
+		// 	if sc.notifyCh != nil {
+		// 		close(sc.notifyCh)
+		// 	}
+		// 	sc.mu.Unlock()
+		// 	return
+		// }
+
 		sc.mu.Unlock()
 
-		value, ok := <-sc.sendCh
-		if !ok {
-			// If sendCh is closed and all messages have been forwarded, close recvCh
-			close(sc.recvCh)
-			if sc.notifyCh != nil {
-				close(sc.notifyCh)
+		for {
+			select {
+			case value, ok := <-sc.sendCh:
+				if !ok {
+					close(sc.recvCh)
+					if sc.notifyCh != nil {
+						close(sc.notifyCh)
+					}
+					return
+				}
+
+				select {
+				case sc.recvCh <- value:
+					sc.notify(Notification[T]{ReturnValue: 0, Message: "message forwarded successfully", Value: value})
+				default:
+					sc.notify(Notification[T]{ReturnValue: -1, Message: "channel buffer full", Value: value})
+					sc.recvCh <- value
+					sc.notify(Notification[T]{ReturnValue: 0, Message: "forwarded after waiting", Value: value})
+					sc.mu.Lock()
+					sc.pendingReceivers--
+					sc.mu.Unlock()
+					goto StopForwarding
+				}
+			default:
+				sc.mu.Lock()
+				sc.pendingReceivers--
+				sc.mu.Unlock()
+				goto StopForwarding
 			}
-			return
 		}
 
-		// Attempt to forward the message to recvCh (same logic as in Send())
-		select {
-		case sc.recvCh <- value:
-			sc.notify(Notification[T]{ReturnValue: 0, Message: "received successfully", Value: value})
-		default:
-			sc.notify(Notification[T]{ReturnValue: -1, Message: "channel buffer full", Value: value})
-			sc.recvCh <- value
-			sc.notify(Notification[T]{ReturnValue: 0, Message: "received after waiting", Value: value})
-		}
+	StopForwarding:
+		continue
 	}
 }
 
@@ -95,22 +145,36 @@ func (sc *SafeChannel[T]) Send(value T) error {
 	}
 }
 
+// func (sc *SafeChannel[T]) Receive() (T, error) {
+// 	value, ok := <-sc.recvCh
+// 	if !ok {
+// 		var zero T
+// 		sc.notify(Notification[T]{ReturnValue: 0, Message: "receive on closed channel"})
+// 		return zero, errors.New("receive on closed channel")
+// 	}
+// 	atomic.AddInt64(&sc.messagesInBuffer, -1)
+// 	return value, nil
+// }
+
 func (sc *SafeChannel[T]) Receive() (T, error) {
-	sc.mu.Lock()
+	var zero T
 
-	// Incremments the counter for pending receivers
-	sc.pendingReceivers++
-	sc.cond.Signal() // Signals forwardMessages that a receiver is ready
-	sc.mu.Unlock()
-
-	value, ok := <-sc.recvCh
-	if !ok {
-		var zero T
-		sc.notify(Notification[T]{ReturnValue: 0, Message: "receive on closed channel"})
-		return zero, errors.New("receive on closed channel")
+	for {
+		select {
+		case value, ok := <-sc.recvCh:
+			if !ok {
+				sc.notify(Notification[T]{ReturnValue: -1, Message: "receive on closed channel"})
+				return zero, errors.New("receive on closed channel")
+			}
+			atomic.AddInt64(&sc.messagesInBuffer, -1)
+			return value, nil
+		default:
+			sc.mu.Lock()
+			sc.pendingReceivers++
+			sc.cond.Signal()
+			sc.mu.Unlock()
+		}
 	}
-	atomic.AddInt64(&sc.messagesInBuffer, -1)
-	return value, nil
 }
 
 func (sc *SafeChannel[T]) Close() error {
