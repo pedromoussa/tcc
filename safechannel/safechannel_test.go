@@ -22,24 +22,6 @@ func TestSafeChannel_NormalOperation(t *testing.T) {
 	}
 }
 
-/*
-FIX - the case being tested here does not happen anymore
-now, instead of an Error when buffer is full, we send a notification (if enabled)
-and then retry the send operation
-*/
-// func TestSafeChannel_FullBuffer(t *testing.T) {
-// 	sc := MakeSafechannel[int](1)
-
-// 	err := sc.Send(42)
-// 	if err != nil {
-// 		t.Errorf("Unexpected error on send: %v", err)
-// 	}
-
-// 	err = sc.Send(99)
-// 	if err == nil || err.Error() != "channel buffer full" {
-// 		t.Errorf("Expected 'channel buffer full' error, got %v", err)
-// 	}
-// }
 func TestSafeChannel_FullBuffer(t *testing.T) {
 	sc := MakeSafechannel[int](1)
 	sc.EnableNotifications(10)
@@ -103,18 +85,6 @@ func TestSafeChannel_SendToClosed(t *testing.T) {
 		t.Errorf("Expected 'send on closed channel' error, got %v", err)
 	}
 }
-
-// func TestNative_ReceiveFromClosed(t *testing.T) {
-// 	ch := make(chan int, 1)
-
-// 	ch <- 42
-
-// 	close(ch)
-
-// 	value := <- ch
-
-// 	t.Errorf("%v", value)
-// }
 
 func TestSafeChannel_ReceiveFromClosed(t *testing.T) {
 	sc := MakeSafechannel[int](1)
@@ -284,15 +254,16 @@ func TestSafeChannel_CustomSelect(t *testing.T) {
 	}
 }
 
-// need to add tests to see if the notification channel works
 func TestSafeChannel_Notifications(t *testing.T) {
-	sc := MakeSafechannel[int]() 
+	sc := MakeSafechannel[int](1) 
 	sc.EnableNotifications(10)
 
-	err := sc.Send(42)
-	if err != nil {
-		t.Errorf("Unexpected error on send: %v", err)
-	}
+	go func() {
+		err := sc.Send(42)
+		if err != nil {
+			t.Errorf("Unexpected error on send: %v", err)
+		}
+	}()
 
 	notification, err := sc.ReadNotification()
 	if err != nil {
@@ -303,7 +274,6 @@ func TestSafeChannel_Notifications(t *testing.T) {
 	}
 }
 
-// test the default case in the custom select
 func TestSafeChannel_CustomSelectDefault(t *testing.T) {
 	sc := MakeSafechannel[int](1)
 

@@ -40,34 +40,6 @@ func (sc *SafeChannel[T]) GetMessageCount() int64 {
 	return atomic.LoadInt64(&sc.messagesInBuffer)
 }
 
-// func (sc *SafeChannel[T]) forwardMessages() {
-// 	var channelsClosed bool
-
-// 	for {
-
-// 		if sc.closed {
-// 			if !channelsClosed {
-// 				close(sc.recvCh)
-// 				if sc.notifyCh != nil {
-// 					close(sc.notifyCh)
-// 				}
-// 				channelsClosed = true
-// 			}
-// 			return
-// 		}
-
-// 		// Attempt to forward the message to recvCh (same logic as in Send())
-// 		select {
-// 		case sc.recvCh <- <- sc.sendCh:
-// 			sc.notify(Notification[T]{ReturnValue: 0, Message: "received successfully"})
-// 		default:
-// 			sc.notify(Notification[T]{ReturnValue: -1, Message: "channel buffer full"})
-// 			sc.recvCh <- <-sc.sendCh
-// 			sc.notify(Notification[T]{ReturnValue: 0, Message: "received after waiting"})
-// 		}
-// 	}
-// }
-
 func (sc *SafeChannel[T]) forwardMessages() {
 	for {
 		sc.mu.Lock()
@@ -76,15 +48,6 @@ func (sc *SafeChannel[T]) forwardMessages() {
 			sc.cond.Wait()
 		}
 
-		// if sc.closed {
-		// 	close(sc.recvCh)
-		// 	if sc.notifyCh != nil {
-		// 		close(sc.notifyCh)
-		// 	}
-		// 	sc.mu.Unlock()
-		// 	return
-		// }
-
 		sc.mu.Unlock()
 
 		for {
@@ -92,9 +55,6 @@ func (sc *SafeChannel[T]) forwardMessages() {
 			case value, ok := <-sc.sendCh:
 				if !ok {
 					close(sc.recvCh)
-					if sc.notifyCh != nil {
-						close(sc.notifyCh)
-					}
 					return
 				}
 
@@ -144,17 +104,6 @@ func (sc *SafeChannel[T]) Send(value T) error {
 		return nil
 	}
 }
-
-// func (sc *SafeChannel[T]) Receive() (T, error) {
-// 	value, ok := <-sc.recvCh
-// 	if !ok {
-// 		var zero T
-// 		sc.notify(Notification[T]{ReturnValue: 0, Message: "receive on closed channel"})
-// 		return zero, errors.New("receive on closed channel")
-// 	}
-// 	atomic.AddInt64(&sc.messagesInBuffer, -1)
-// 	return value, nil
-// }
 
 func (sc *SafeChannel[T]) Receive() (T, error) {
 	var zero T
@@ -215,20 +164,46 @@ func Select(cases ...SelectCaseFunc) (int, interface{}, error) {
 	return -1, nil, nil
 }
 
+// func CaseReceive[T any](sc *SafeChannel[T], onReceive func(T)) SelectCaseFunc {
+// 	return func() (bool, int, interface{}, error) {
+// 		select {
+// 		case msg, ok := <-sc.recvCh:
+// 			if !ok {
+// 				sc.notify(Notification[T]{ReturnValue: -1, Message: "receive on closed channel", Value: msg})
+// 				return true, -1, nil, errors.New("receive on closed channel")
+// 			}
+// 			if onReceive != nil {
+// 				onReceive(msg)
+// 			}
+// 			return true, 0, msg, nil
+// 		default:
+// 			return false, 0, nil, nil
+// 		}
+// 	}
+// }
+
 func CaseReceive[T any](sc *SafeChannel[T], onReceive func(T)) SelectCaseFunc {
 	return func() (bool, int, interface{}, error) {
-		select {
-		case msg, ok := <-sc.recvCh:
-			if !ok {
-				sc.notify(Notification[T]{ReturnValue: -1, Message: "receive on closed channel", Value: msg})
-				return true, -1, nil, errors.New("receive on closed channel")
+		// var zero T
+
+		for {
+			select {
+			case msg, ok := <-sc.recvCh:
+				if !ok {
+					sc.notify(Notification[T]{ReturnValue: -1, Message: "receive on closed channel", Value: msg})
+					return true, -1, nil, errors.New("receive on closed channel")
+				}
+				if onReceive != nil {
+					onReceive(msg)
+				}
+				atomic.AddInt64(&sc.messagesInBuffer, -1)
+				return true, 0, msg, nil
+			default:
+				sc.mu.Lock()
+				sc.pendingReceivers++
+				sc.cond.Signal()
+				sc.mu.Unlock()
 			}
-			if onReceive != nil {
-				onReceive(msg)
-			}
-			return true, 0, msg, nil
-		default:
-			return false, 0, nil, nil
 		}
 	}
 }
