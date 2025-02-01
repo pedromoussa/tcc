@@ -2,103 +2,70 @@ package main
 
 import (
 	"fmt"
-	"sync"
 	"time"
 	"biblioteca/safechannel"
 )
 
-func main() {
-	fmt.Println("== Usando SafeChannel ==")
-	testSafeChannel()
+// Exemplo de uso do SafeChannel
 
-	fmt.Println("\n== Usando Channels Convencionais ==")
-	testConventionalChannel()
+// Pedido representa um pedido no restaurante
+type Pedido struct {
+	ID      int
+	Cliente string
 }
 
-func testSafeChannel() {
-	// Criando um SafeChannel com buffer de 2
-	sc := safechannel.MakeSafechannel[string](2)
-
-	// bufferedChannel := safechannel.MakeSafechannel[int](2)
-	// unbufferedChannel := safechannel.MakeSafechannel[string](0)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
- // Goroutine 1 - Enviando dados usando SafeChannel
- go func() {
-	 defer wg.Done()
-	 for i := 0; i < 2; i++ {
-		 err := sc.Send(fmt.Sprintf("SafeChannel Mensagem %d", i+1))
-		 if err != nil {
-			 fmt.Println("Erro ao enviar (SafeChannel):", err)
-			 return
-		 }
-		 fmt.Println("Enviado (SafeChannel):", i+1)
-	 }
-	 // Fechando o SafeChannel após envio
-	 if err := sc.Close(); err != nil {
-		 fmt.Println("Erro ao fechar (SafeChannel):", err)
-	 }
-  }()
- 	// Goroutine 2 - Recebendo dados usando SafeChannel
-	go func() {
-		defer wg.Done()
-		time.Sleep(1 * time.Second) // Simulando algum processamento
-		for {
-			value, err := sc.Receive()
-			if err != nil {
-				fmt.Println("Erro ao receber (SafeChannel):", err)
-				return
-			}
-			fmt.Println("Recebido (SafeChannel):", value)
+// Garçom recebe pedidos e os envia para a cozinha pelo SafeChannel
+func Garcom(sc *safechannel.SafeChannel[Pedido]) {
+	for i := 1; i <= 5; i++ {
+		pedido := Pedido{ID: i, Cliente: fmt.Sprintf("Cliente %d", i)}
+		err := sc.Send(pedido)
+		if err != nil {
+			fmt.Println("Erro ao enviar pedido:", err)
+		} else {
+			fmt.Printf("Garçom: Pedido %d recebido\n", pedido.ID)
 		}
-	}()
+		time.Sleep(1 * time.Second) // Simula tempo entre pedidos
+	}
+	sc.Close() // Fecha o canal após todos os pedidos serem enviados
+}
 
-	// Aguardando as goroutines finalizarem
-	wg.Wait()
-
-	// Teste de erro: Tentar enviar para um SafeChannel já fechado
-	err := sc.Send("Tentando enviar após fechar (SafeChannel)")
-	if err != nil {
-		fmt.Println("Erro detectado conforme esperado (SafeChannel):", err)
+// Cozinha recebe pedidos e os processa
+func Cozinha(sc *safechannel.SafeChannel[Pedido]) {
+	for {
+		pedido, err := sc.Receive()
+		if err != nil {
+			fmt.Println("Cozinha: Nenhum pedido restante, fechando.")
+			sc.Close()
+			return
+		}
+		fmt.Printf("Cozinha: Preparando pedido %d para %s\n", pedido.ID, pedido.Cliente)
+		time.Sleep(2 * time.Second) // Simula tempo de preparo
+		fmt.Printf("Cozinha: Pedido %d pronto!\n", pedido.ID)
 	}
 }
 
-func testConventionalChannel() {
-	// Criando um canal convencional com buffer de 2
-	ch := make(chan string, 2)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// Goroutine 1 - Enviando dados usando Channel Convencional
+// Monitoramento do canal de notificações
+func monitorarNotificacoes(sc *safechannel.SafeChannel[Pedido]) {
 	go func() {
-		defer wg.Done()
-		for i := 0; i < 2; i++ {
-			ch <- fmt.Sprintf("Channel Mensagem %d", i+1)
-			fmt.Println("Enviado (Channel):", i+1)
-		}
-		close(ch) // Fechando o canal após envio
-	}()
-
-	// Goroutine 2 - Recebendo dados usando Channel Convencional
-	go func() {
-		defer wg.Done()
-		time.Sleep(1 * time.Second) // Simulando algum processamento
-		for value := range ch {
-			fmt.Println("Recebido (Channel):", value)
+		for {
+			notificacao, err := sc.ReadNotification()
+			if err != nil {
+				break
+			}
+			fmt.Printf("LOG: %s | Função: %s | Arquivo: %s | Linha: %d\n",
+				notificacao.Message, notificacao.FuncName, notificacao.File, notificacao.Line)
 		}
 	}()
+}
 
-	// Aguardando as goroutines finalizarem
-	wg.Wait()
+func main() {
+	sc := safechannel.MakeSafechannel[Pedido](2)
+	sc.EnableNotifications(5)	// Ativa o canal de notificações
 
-	// Teste de erro: Tentar enviar para um canal já fechado
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Println("Erro detectado conforme esperado (Channel):", r)
-		}
-	}()
-	ch <- "Tentando enviar após fechar (Channel)" // Isso causará um pânico
+	go Garcom(sc)
+	go Cozinha(sc)
+	monitorarNotificacoes(sc)
+
+	time.Sleep(15 * time.Second) // Aguarda todas as goroutines finalizarem
+	fmt.Println("Restaurante fechado!")
 }
