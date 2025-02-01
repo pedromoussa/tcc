@@ -283,13 +283,15 @@ func TestSafeChannel_CustomSelectDefault(t *testing.T) {
 	}()
 
 	idx, value, err := Select(
-		CaseReceive(sc, nil),
+		CaseReceive(sc, func(msg int) {
+			t.Errorf("CaseReceive executed unexpectedly with message %v", msg)
+		}),
 		CaseDefault(func() {
 			t.Log("Default case executed")
 		}),
 	)
 
-	if idx != 0 || value.(int) != 42 || err != nil {
-		t.Errorf("Expected case index 0 with value 42, got idx: %v, value: %v, err: %v", idx, value, err)
+	if idx != -1 || value != nil || err != nil {
+		t.Errorf("Expected default case execution (idx=-1, nil value, nil error), got idx: %v, value: %v, err: %v", idx, value, err)
 	}
 }

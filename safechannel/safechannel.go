@@ -143,7 +143,6 @@ func (sc *SafeChannel[T]) Close() error {
 
 type SelectCaseFunc func() (bool, int, interface{}, error)
 
-// Trying to ensure default case is evaluated only when no other case is ready
 func Select(cases ...SelectCaseFunc) (int, interface{}, error) {
 	var defaultIdx int = -1
 	for i, c := range cases {
@@ -164,28 +163,8 @@ func Select(cases ...SelectCaseFunc) (int, interface{}, error) {
 	return -1, nil, nil
 }
 
-// func CaseReceive[T any](sc *SafeChannel[T], onReceive func(T)) SelectCaseFunc {
-// 	return func() (bool, int, interface{}, error) {
-// 		select {
-// 		case msg, ok := <-sc.recvCh:
-// 			if !ok {
-// 				sc.notify(Notification[T]{ReturnValue: -1, Message: "receive on closed channel", Value: msg})
-// 				return true, -1, nil, errors.New("receive on closed channel")
-// 			}
-// 			if onReceive != nil {
-// 				onReceive(msg)
-// 			}
-// 			return true, 0, msg, nil
-// 		default:
-// 			return false, 0, nil, nil
-// 		}
-// 	}
-// }
-
 func CaseReceive[T any](sc *SafeChannel[T], onReceive func(T)) SelectCaseFunc {
 	return func() (bool, int, interface{}, error) {
-		// var zero T
-
 		for {
 			select {
 			case msg, ok := <-sc.recvCh:
@@ -199,10 +178,14 @@ func CaseReceive[T any](sc *SafeChannel[T], onReceive func(T)) SelectCaseFunc {
 				atomic.AddInt64(&sc.messagesInBuffer, -1)
 				return true, 0, msg, nil
 			default:
-				sc.mu.Lock()
-				sc.pendingReceivers++
-				sc.cond.Signal()
-				sc.mu.Unlock()
+				if atomic.LoadInt64(&sc.messagesInBuffer) > 0 {
+					sc.mu.Lock()
+					sc.pendingReceivers++
+					sc.cond.Signal()
+					sc.mu.Unlock()
+					continue
+				}
+				return false, 0, nil, nil
 			}
 		}
 	}
@@ -224,7 +207,6 @@ func CaseSend[T any](sc *SafeChannel[T], msg T) SelectCaseFunc {
 	}
 }
 
-// Default case will now perform an action
 func CaseDefault(action func()) SelectCaseFunc {
 	return func() (bool, int, interface{}, error) {
 			if action != nil {
