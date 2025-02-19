@@ -4,8 +4,7 @@ import (
 	"testing"
 )
 
-const numOperations = 1000000
-const bufferSize = 100
+const numOperations, bufferSize = 1000000, 100
 
 func BenchmarkNativeChannel(b *testing.B) {
 	for i := 0; i < b.N; i++ {
@@ -19,7 +18,8 @@ func BenchmarkNativeChannel(b *testing.B) {
 			close(ch)
 		}()
 
-		for range ch {
+		for v:= range ch {
+			_ = v
 		}
 		b.StopTimer()
 	}
