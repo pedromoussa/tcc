@@ -87,6 +87,7 @@ func (sc *SafeChannel[T]) Send(value T) error {
 	sc.mu.Lock()
 	if sc.closed {
 		sc.notify(Notification[T]{ReturnValue: -1, Message: "send on closed channel", Value: value})
+		sc.mu.Unlock()
 		return errors.New("send on closed channel")
 	}
 	sc.mu.Unlock()
